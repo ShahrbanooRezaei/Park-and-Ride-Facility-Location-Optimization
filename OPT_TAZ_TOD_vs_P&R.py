@@ -1,0 +1,397 @@
+""" 
+Created on Mon Jun 21 18:24:13 2021
+
+@author: Dr. Anahita Khojandi, Shahrbanoo Rezaei
+
+Please contact the authors using "khojandi@utk.edu" or "srezaei@vols.utk.edu" if you have any questions.
+"""
+
+"""
+This code compares TODs and P&Rs in the City of Nashville
+"""
+#### Import required packages
+import pandas as pd
+import numpy as np
+import time
+import os
+from pyomo.environ import *
+
+#### User Inputs
+pp = float(input("Please enter a value between 1 and 11 determining the number of candidate P&Rs should be established : \n"))
+solv = input("Please identify the solver. You can enter gurobi, cbc or glpk \n")
+obj_func = input("Please enter 'UM' if you want to optimize based on the utilization maximization or enter 'ER' if you want to optimize based on the emission reduction \n")
+
+print('*************** The model is running ***************')
+
+#### Data Directory
+path_parent = os. path. dirname(os. getcwd())
+os. chdir(path_parent)
+data_dir = os. getcwd()
+
+#### Import datasets
+if obj_func == 'UM':
+    df = pd.read_csv(data_dir+'\data_P&R.csv') 
+    df_array = np.array(df)
+if obj_func == 'ER':
+    df = pd.read_csv(data_dir+'\data_P&R_dis.csv') 
+    df_array = np.array(df) 
+
+df2 = pd.read_csv(data_dir+'\MNL_bal_Coef_output.csv')
+res = np.array(df2)
+result = np.median(res,axis=0).reshape(1,-1) ## Get the median of coefficients over 10 fold
+
+df3 = pd.read_csv(data_dir+'\Transit_time_P&R_CBD.csv')
+T_Time_P_CBD = np.array(df3).tolist()[0]
+
+
+#### Identifying “representatives” who presented the median characteristics of those individuals in each zone. 
+unique_elements, count_elements = np.unique(df_array[:,-1],return_counts=True)
+it = -1
+fc=0
+for i in unique_elements:
+    da = df_array[df_array[:,-1]==i]
+    u, c = np.unique(da[:,0],return_counts=True)
+    fc = fc+u.shape[0]
+
+data = np.zeros((fc,df_array[:,1:-5].shape[1]+2))
+it = -1
+demand=[]
+for i in unique_elements:
+    da = df_array[df_array[:,-1]==i]
+    u, c = np.unique(da[:,0],return_counts=True)
+    it2=-1
+    for j in u:
+        it = it+1
+        a = da[da[:,0]==j]
+        da_median = np.median(a[:,1:-5],axis=0)
+        it2=it2+1
+        data[it,1:-1] = da_median
+        data[it,0] = i
+        data[it,-1] = j
+        demand.append(c[it2])
+
+#### number of individuals
+I = data.shape[0]
+### number of other modes
+om =3
+#### number of Existing PR
+ep = 14
+#### number of Candidate PR
+cp = len(T_Time_P_CBD)-ep
+#### number of TPR
+PR = len(T_Time_P_CBD)
+#### number of modes
+N_M = om + PR
+
+#### manually recalculated and adjusted the estimated P&R "travel time" which obtained from dataset
+Y=[[1]*(PR) for i in range(I)]
+Y=np.zeros((I,PR))
+it=-1
+for taz in data[:,0]:
+    it=it+1
+    OrNa = df_array[df_array[:,-1]==taz][0,-2]
+    if OrNa == 'Maury':
+        Y[it,:] = [1, 1, 0, 0, 1, 0, 0, 1, 1, 1, 0, 0, 0, 0,  0,0,1,1,1,1,1, 1,1,1,1]
+    elif OrNa == 'Robertson':
+        Y[it,:] = [0, 0, 1, 1, 0, 1, 1, 0, 0, 0, 1, 1, 1, 1,  1,1,0,0,0,0,0, 0,0,0,0]
+    elif OrNa == 'Rutherford':
+        Y[it,:] = [1, 1, 0, 0, 1, 0, 0, 1, 1, 1, 0, 0, 0, 0,  0,0,1,1,1,1,1, 1,1,1,1]
+    elif OrNa == 'Wilson':
+        Y[it,:] = [0, 1, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1,  1,1,1,1,1,1,1, 0,0,0,0]
+    elif OrNa == 'Sumner':
+        Y[it,:] = [0, 0, 1, 0, 0, 1, 1, 0, 0, 0, 1, 1, 1, 1,  1,1,0,0,0,0,0, 0,0,0,0]
+    elif OrNa == 'Williamson':
+        Y[it,:] = [1, 1, 0, 0, 1, 0, 0, 1, 1, 0, 0, 0, 0, 0,  0,0,1,1,1,1,1, 1,1,1,1]
+    elif OrNa == 'Far South':
+        Y[it,:] = [0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  0,0,0,0,0,0,0, 0,0,0,1]
+    elif OrNa == 'Far NE':
+        Y[it,:] = [0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0,  1,1,0,0,0,0,0, 0,0,0,0]    
+    elif OrNa == 'Far North':
+        Y[it,:] = [0, 0, 1, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0,  0,0,0,0,0,0,0, 0,0,0,0]
+    elif OrNa == 'Far West':
+        Y[it,:] = [0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  0,0,0,0,0,0,0, 0,0,0,0]
+    elif OrNa == 'East':
+        Y[it,:] = [0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0,  0,0,0,0,1,1,1, 0,0,1,1]   
+    elif OrNa == 'Far SE':
+        Y[it,:] = [0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0,  0,0,0,0,1,1,1, 0,0,1,1]
+
+if obj_func == 'UM':         
+    for i in range(data.shape[0]):
+        data[i,26:-1] = data[i,26:-1]+(1-Y[i,:])*100
+if obj_func == 'ER':
+    for i in range(data.shape[0]):
+        data[i,26:26+PR] = data[i,26:26+PR]+(1-Y[i,:])*100
+Y = Y.tolist()
+
+
+#### define cost or utility of modes
+cost=[[0]*N_M for i in range(I)]
+
+for i in range(I):
+    #SOV
+    cost[i][0] = result[0,46] * data[i,23] 
+    #HOV
+    cost[i][1] = result[0,0] + result[0,2] * data[i,1] + result[0,4] *data[i,2] + result[0,6] * data[i,3] + result[0,8] * data[i,4] + result[0,10] * data[i,5] + result[0,12] * data[i,6] + result[0,14] * data[i,7] + result[0,16] * data[i,8] + result[0,18] *data[i,9] + result[0,20] * data[i,10] + result[0,22] * data[i,11] + result[0,24] * data[i,12] + result[0,26] * data[i,13] + result[0,28] *data[i,14] + result[0,30] * data[i,15]  + result[0,32] * data[i,16] + result[0,34] * data[i,17] + result[0,36] * data[i,18] + result[0,38] * data[i,19] + result[0,40] * data[i,20] + result[0,42] * data[i,21] + result[0,44] * data[i,22] + result[0,47] * data[i,24]  
+    #Transit
+    cost[i][2] = result[0,1] + result[0,3] * data[i,1] + result[0,5] *data[i,2] + result[0,7] * data[i,3] + result[0,9] * data[i,4] + result[0,11] * data[i,5] + result[0,13] * data[i,6] + result[0,15] * data[i,7] + result[0,17] * data[i,8] + result[0,19] *data[i,9] + result[0,21] * data[i,10] + result[0,23] * data[i,11] + result[0,25] * data[i,12] + result[0,27] * data[i,13] + result[0,29] *data[i,14] + result[0,31] * data[i,15]  + result[0,33] * data[i,16] + result[0,35] * data[i,17] + result[0,37] * data[i,18] + result[0,39] * data[i,19] + result[0,41] * data[i,20] + result[0,43] * data[i,21] + result[0,45] * data[i,22] + result[0,48] * data[i,25] 
+       
+# Utility of P&R using Approach 2
+alph = 0.2 #HOV
+bet = 1-alph   #Transit
+
+for k in range(PR):
+    for i in range(I):
+        cost[i][k+3] =  alph*(result[0,0] + result[0,2] * data[i,1] + result[0,4] *data[i,2] + result[0,6] * data[i,3] + result[0,8] * data[i,4] + result[0,10] * data[i,5] + result[0,12] * data[i,6] + result[0,14] * data[i,7] + result[0,16] * data[i,8] + result[0,18] *data[i,9] + result[0,20] * data[i,10] + result[0,22] * data[i,11] + result[0,24] * data[i,12] + result[0,26] * data[i,13] + result[0,28] *data[i,14] + result[0,30] * data[i,15]  + result[0,32] * data[i,16] + result[0,34] * data[i,17] + result[0,36] * data[i,18] + result[0,38] * data[i,19] + result[0,40] * data[i,20] + result[0,42] * data[i,21] + result[0,44] * data[i,22]) \
+                        +bet*( result[0,1] + result[0,3] * data[i,1] + result[0,5] *data[i,2] + result[0,7] * data[i,3] + result[0,9] * data[i,4] + result[0,11] * data[i,5] + result[0,13] * data[i,6] + result[0,15] * data[i,7] + result[0,17] * data[i,8] + result[0,19] *data[i,9] + result[0,21] * data[i,10] + result[0,23] * data[i,11] + result[0,25] * data[i,12] + result[0,27] * data[i,13] + result[0,29] *data[i,14] + result[0,31] * data[i,15]  + result[0,33] * data[i,16] + result[0,35] * data[i,17] + result[0,37] * data[i,18] + result[0,39] * data[i,19] + result[0,41] * data[i,20] + result[0,43] * data[i,21] + result[0,45] * data[i,22]) \
+                        +(alph*result[0,47] + bet*result[0,48] ) * (data[i,26+k] + T_Time_P_CBD[k])           
+cost=np.around(cost, decimals=2)
+cost=cost.tolist()
+
+#### the number of candidate P&R can be opened:
+pp=pp # Determined by user
+
+print(' ******************************** optimization model (MILP) ********************************')
+#### Construct the model
+print('\n','Constructing the MILP model variables and constraints')
+st=time.time()
+
+# Defining concrete model in pyomo
+model = ConcreteModel()
+
+# Defining decision variables
+model.OM = range(om)
+model.EP = range(ep)
+model.CP = range(cp)
+model.nCP = range(om+ep)
+model.PR = range(PR)
+model.kk = range(N_M)
+model.I = range(I)
+model.x = Var(model.kk, within=Binary)
+model.p = Var(model.I, model.kk, within=NonNegativeReals, bounds=(0,None))
+
+if obj_func == 'UM':
+    # Defining objective function
+    model.obj = Objective( expr = sum( demand[i]*model.p[i,k+3] for i in model.I for k in model.PR ),sense=maximize ) #-200*sum( model.x[i+17] for i in model.CP )
+if obj_func == 'ER':
+    #Minimizing Emissions 
+    w=0.96 #  single- occupancy private vehicle at 0.96 lbs CO2 per passenger mile 
+    wp=0.45 #the average transit system emits 0.45 lbs CO2 per passenger mile 
+    model.obj = Objective( expr = sum( w*(data[i,51]*1.9)*demand[i]*(model.p[i,0]+(model.p[i,1])) for i in model.I )\
+                          +sum( w*(data[i,52+k])*demand[i]*model.p[i,k+3] for i in model.I for k in model.PR) \
+                          +sum( (wp)*(T_Time_P_CBD[k]*0.20)*demand[i]*model.p[i,k+3] for i in model.I for k in model.PR)\
+                          +sum( (wp)*(data[i,51]*1.9)*demand[i]*model.p[i,2] for i in model.I)   
+                          ,sense=minimize ) 
+  
+    
+# Defining constraints
+model.c1 = ConstraintList()
+for i in model.I:
+    model.c1.add( sum( model.p[i,k] for k in model.kk ) == 1.0 )
+
+model.c2 = ConstraintList()
+for i in model.I:
+    for k in model.kk:
+        model.c2.add( model.p[i,k] <= model.x[k] )    
+
+model.c3 = ConstraintList()
+for i in model.I:
+    for k in model.kk:
+        for k2 in model.kk:
+            model.c3.add( model.p[i,k]<=((np.exp(cost[i][k])/np.exp(cost[i][k2]))*model.p[i,k2])+(1-model.x[k2])) 
+            
+model.c5 = Constraint( expr=sum( model.x[k+3+14] for k in model.CP ) == pp ) 
+
+model.c6 = ConstraintList()
+for k in model.nCP:
+     model.c6.add( model.x[k] == 1.0 )
+    
+ft=time.time()
+print('\n','Time to model MILP:',round(ft-st),'seconds')
+
+#### Find the MILP solution
+print('\n','Solving the MILP model')
+st=time.time()
+
+if solv == 'glpk':
+    opt = SolverFactory('glpk')
+elif solv == 'cbc':
+    opt = SolverFactory('cbc', executable="cbc.exe")
+elif solv == 'gurobi':
+    opt = SolverFactory('gurobi')
+
+opt.solve(model) 
+
+ft=time.time()
+print('\n','Time to solve the MILP:',round(ft-st),'seconds')
+
+print('\n','**************************** Analyazing the model output ****************************')
+np.random.seed(0)
+n_origin=I
+kk=N_M
+
+### take optimal solutions from the optimization model
+x_Att=[model.x[a].value for a in range(kk)]
+p_Att_a=[model.p[i,0].value for i in range(n_origin)]
+p_Att_h=[model.p[i,1].value for i in range(n_origin)] 
+p_Att_t=[model.p[i,2].value for i in range(n_origin)]
+p_Att_k=[[model.p[i,k].value for k in range(3,3+PR)] for i in range(n_origin)]
+p_Att=[[model.p[i,k].value for k in range(N_M)] for i in range(n_origin)]
+
+p = np.array(p_Att)
+
+
+#### post processing
+for i in range(p.shape[0]):
+    c=0
+    for k in range(p.shape[1]):
+        if p[i,k] < 0.02:
+            if k >=3:
+                c = c+p[i,k]
+                p[i,k]=0
+    v=[]
+    for k in range(p.shape[1]):
+        if k >=3:
+            if p[i,k] >0:
+                v.append(k)
+    cc = c/(len(v)+0.00000006)
+    for k in v:
+        p[i,k] = p[i,k] + cc
+
+aa = np.sum(p,axis=1).reshape(3759,1)
+p = p/aa
+
+print ('\n','********* Selected P&Rs *********')
+b=[]
+for k in range(cp):
+    if x_Att [k+3+14] >0:
+        b.append(k+15)
+print (b)
+
+print('\n','   ************************* TOD vs P&R analysis *************************   ')
+
+#### get individual matrix of probability
+dd = np.zeros((data.shape[0],p.shape[1]+2))
+dd[:,0] = data[:,0]
+dd[:,1:-1] = p
+dd[:,-1] = data[:,-1]
+
+
+#### Import data
+df2 = pd.read_csv('data_P&R.csv') 
+df_array = np.array(df2)
+
+#### extend the optained probability among the related demand (individuals in one demand zone have same choice probability) 
+## Convert probability back to real individual space
+p_ind = np.zeros((df_array.shape[0], p.shape[1]))
+for i in range(df_array.shape[0]):
+    tz = df_array[i,-1]
+    mode = df_array[i,0]
+    a = dd[dd[:,0]==tz]
+    a = a[a[:,-1]==mode][:,1:-1]
+    p_ind[i,:] = a
+
+
+#### Import distance matrix
+dis = pd.read_csv('data_P&R_dis.csv') 
+dis_array = np.array(dis)[:,51:-5]
+#### change mile to KM
+dis_array= dis_array*1.60934
+
+
+#### Calculate A
+A = np.zeros((1,PR))
+for k in range(PR):
+    if x_Att[k+3] ==1:
+        A[0,k] = np.sum(dis_array[:,k+1]*p_ind[:,k+3]) / np.sum(p_ind[:,k+3])
+
+#### Calculate C
+C = np.zeros((1,PR))
+x_s = df_array[df_array[:,0]==1].shape[0] /df_array.shape[0]
+x_h = df_array[df_array[:,0]==2].shape[0] /df_array.shape[0]
+x_t = df_array[df_array[:,0]==3].shape[0] /df_array.shape[0]
+
+for k in range(PR):
+    if x_Att[k+3] ==1:
+        C[0,k] = np.sum(p_ind[:,k+3]*(x_s*dis_array[:,0]*1.9+x_h*1.9*(dis_array[:,0]/2))) / np.sum(p_ind[:,k+3]) 
+        #1.9 is used to adjust the speed in SOV travels from origin to P&R with those speed in SOV trips from origin to CBD
+        
+#### Round Trip
+A = 2*A
+C = 2*C
+
+#### Calculate R
+R = C-A
+
+#### Calculating RHP
+H = 1.26 #Avg in P&R stations in Charlotte, NC
+BP = []
+for k in range(PR):
+    BP.append(np.sum (p_ind[:,k+3]))
+
+BP = np.array(BP)
+RHP = (BP/H)*R
+
+#### Calculating minimum RT by fix U/H to meet RHP
+V = 0.9
+UH = np.array([50, 100, 150, 200, 250, 300, 350, 400, 450, 500, 550, 600, 650, 700])
+UHV = UH*V
+RHT = RHP
+RT = np.zeros((PR , UH.shape[0]))
+for i in range(UH.shape[0]):
+    RT[:,i] = RHT / UHV[i]
+
+#### Calculating minimum UH by fix RT to meet RHP
+RT2 = np.array([5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70])
+UH2 = np.zeros((PR , RT2.shape[0]))
+RHT = RHP
+
+for i in range(RT2.shape[0]):
+    UH2[:,i] = RHT / (RT2[i]*V)
+
+
+#### save results
+
+df = pd.DataFrame(A)
+df.columns = ['PR1','PR2','PR3','PR4','PR5','PR6','PR7','PR8','PR9','PR10','PR11','PR12','PR13','PR14',\
+              'PR15','PR16','PR17','PR18','PR19','PR20','PR21','PR22','PR23','PR24','PR25']
+df.to_csv('Optimization_model_TOD_vs_P&R/TOD_vs_P&R_Obj_'+obj_func+'_P_'+str(pp)+'_A.csv',index=False)
+
+
+df = pd.DataFrame(C)
+df.columns = ['PR1','PR2','PR3','PR4','PR5','PR6','PR7','PR8','PR9','PR10','PR11','PR12','PR13','PR14',\
+              'PR15','PR16','PR17','PR18','PR19','PR20','PR21','PR22','PR23','PR24','PR25']
+df.to_csv('Optimization_model_TOD_vs_P&R/TOD_vs_P&R_Obj_'+obj_func+'_P_'+str(pp)+'_C.csv',index=False)
+
+df = pd.DataFrame(R)
+df.columns = ['PR1','PR2','PR3','PR4','PR5','PR6','PR7','PR8','PR9','PR10','PR11','PR12','PR13','PR14',\
+              'PR15','PR16','PR17','PR18','PR19','PR20','PR21','PR22','PR23','PR24','PR25']
+df.to_csv('Optimization_model_TOD_vs_P&R/TOD_vs_P&R_Obj_'+obj_func+'_P_'+str(pp)+'_R.csv',index=False)
+
+
+DD = []
+for k in range(PR):
+    DD.append(np.sum(p_ind[:,k+3]))
+DD = np.array(DD).reshape(1,PR)
+df = pd.DataFrame(DD)
+df.columns = ['PR1','PR2','PR3','PR4','PR5','PR6','PR7','PR8','PR9','PR10','PR11','PR12','PR13','PR14',\
+              'PR15','PR16','PR17','PR18','PR19','PR20','PR21','PR22','PR23','PR24','PR25']
+df.to_csv('Optimization_model_TOD_vs_P&R/TOD_vs_P&R_Obj_'+obj_func+'_P_'+str(pp)+'_Demand.csv',index=False)
+
+df = pd.DataFrame(RHP)
+df.columns = ['PR1','PR2','PR3','PR4','PR5','PR6','PR7','PR8','PR9','PR10','PR11','PR12','PR13','PR14',\
+              'PR15','PR16','PR17','PR18','PR19','PR20','PR21','PR22','PR23','PR24','PR25']
+df.to_csv('Optimization_model_TOD_vs_P&R/TOD_vs_P&R_Obj_'+obj_func+'_P_'+str(pp)+'_RHP.csv',index=False)
+
+df = pd.DataFrame(RT)
+df.columns = ['50', '100', '150', '200', '250', '300', '350', '400', '450', '500', '550', '600', '650', '700']
+df['RT'] = [['PR1'],['PR2'],['PR3'],['PR4'],['PR5'],['PR6'],['PR7'],['PR8'],['PR9'],['PR10'],['PR11'],['PR12'],['PR13'],['PR14'],
+       ['PR15'],['PR16'],['PR17'],['PR18'],['PR19'],['PR20'],['PR21'],['PR22'],['PR23'],['PR24'],['PR25']]
+df = df[['RT','50', '100', '150', '200', '250', '300', '350', '400', '450', '500', '550', '600', '650', '700']]
+df.to_csv('Optimization_model_TOD_vs_P&R/TOD_vs_P&R_Obj_'+obj_func+'_P_'+str(pp)+'_RT.csv',index=False)
+
+df = pd.DataFrame(UH2)
+df.columns = ['5', '10', '15', '20', '25', '30', '35', '40', '45', '50', '55', '60', '65', '70']
+df['UH'] = [['PR1'],['PR2'],['PR3'],['PR4'],['PR5'],['PR6'],['PR7'],['PR8'],['PR9'],['PR10'],['PR11'],['PR12'],['PR13'],['PR14'],
+       ['PR15'],['PR16'],['PR17'],['PR18'],['PR19'],['PR20'],['PR21'],['PR22'],['PR23'],['PR24'],['PR25']]
+df = df[['UH','5', '10', '15', '20', '25', '30', '35', '40', '45', '50', '55', '60', '65', '70']]
+df.to_csv('Optimization_model_TOD_vs_P&R/TOD_vs_P&R_Obj_'+obj_func+'_P_'+str(pp)+'_UH.csv',index=False)
