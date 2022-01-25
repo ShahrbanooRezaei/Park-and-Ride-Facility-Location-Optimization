@@ -1,4 +1,4 @@
-# Improvement of P&R facility and sercices in metropolitain areas of Tennessee
+# Improvement of P&R facility and services in metropolitain areas of Tennessee
 
 ************************************************* OPT_TAZ python files ************************************************* 
 
