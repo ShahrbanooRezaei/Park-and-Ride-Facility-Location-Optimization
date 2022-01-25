@@ -4,7 +4,7 @@
 
 
 (1) Codes related to extracting information needed for this report. 
-    ## "_household.tsv", "_person.tsv" and "_trip.tsv" are three datasets we recieved from MPO. We needed to mix these datasets and extract information required for this project.
+    ## "_household.tsv", "_person.tsv" and "_trip.tsv" are three datasets we recieved from TDOT. We needed to mix these datasets and extract information required for this project.
     ## These three datasets along with "QGISdata.csv" are imported into codes "Data_extraction.py" and "Data_extraction_dis.py" to extract "data_P&R.csv" and "data_P&R_dis.csv" which are used for the MNL model and optimization model.
 
 
